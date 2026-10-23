@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleprompter</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+  body { background: var(--bg, #000); color: var(--fg, #fff); }
+
+  #prompter {
+    position: fixed; inset: 0;
+    overflow-y: auto;
+    padding: 50vh 8vw;
+    scrollbar-width: none;
+  }
+  #prompter::-webkit-scrollbar { display: none; }
+  #text {
+    max-width: 1200px; margin: 0 auto;
+    white-space: pre-wrap; word-wrap: break-word;
+    line-height: 1.4; text-align: center;
+    font-size: var(--size, 60px);
+  }
+
+  #bar {
+    position: fixed; top: 0; left: 0; right: 0;
+    display: flex; justify-content: center; gap: 8px;
+    padding: 10px; z-index: 2;
+    opacity: .35; transition: opacity .2s;
+  }
+  #bar:hover, body.paused #bar { opacity: 1; }
+  #bar button {
+    font: inherit; font-size: 16px;
+    padding: 8px 16px; border: 0; border-radius: 8px;
+    background: rgba(128,128,128,.35); color: inherit; cursor: pointer;
+  }
+
+  #config {
+    position: fixed; inset: 0; z-index: 3;
+    background: #111; color: #eee;
+    display: none; flex-direction: column; gap: 16px;
+    padding: 20px; overflow-y: auto;
+  }
+  #config.open { display: flex; }
+  #config textarea {
+    flex: 1; min-height: 200px; width: 100%;
+    font: 16px/1.5 system-ui, sans-serif;
+    padding: 12px; border-radius: 8px; border: 1px solid #333;
+    background: #000; color: #eee; resize: none;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
+  .row label { display: flex; align-items: center; gap: 8px; }
+  .row input[type=range] { width: 160px; }
+  #close {
+    font: inherit; font-size: 18px; padding: 12px;
+    border: 0; border-radius: 8px; background: #2a7; color: #fff; cursor: pointer;
+  }
+</style>
+</head>
+<body class="paused">
+
+<div id="bar">
+  <button id="openConfig">⚙ Config</button>
+  <button id="play">▶ Play</button>
+  <button id="fullscreen">⛶ Tela cheia</button>
+</div>
+
+<div id="prompter"><div id="text"></div></div>
+
+<div id="config">
+  <textarea id="input" placeholder="Cole seu texto aqui..."></textarea>
+  <div class="row">
+    <label>Fonte <input id="size" type="range" min="20" max="150"> <span id="sizeVal"></span></label>
+    <label>Velocidade <input id="speed" type="range" min="5" max="300"> <span id="speedVal"></span></label>
+    <label>Fundo <input id="bg" type="color"></label>
+    <label>Texto <input id="fg" type="color"></label>
+  </div>
+  <button id="close">Fechar</button>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const prompter = $('prompter'), text = $('text'), input = $('input');
+
+  const defaults = { text: '', size: 60, speed: 40, bg: '#000000', fg: '#ffffff' };
+  let s = { ...defaults };
+  try { Object.assign(s, JSON.parse(localStorage.getItem('teleprompter') || '{}')); } catch {}
+  const save = () => { try { localStorage.setItem('teleprompter', JSON.stringify(s)); } catch {} };
+
+  function apply() {
+    text.textContent = s.text || 'Clique em ⚙ Config para colocar seu texto.';
+    document.body.style.setProperty('--size', s.size + 'px');
+    document.body.style.setProperty('--bg', s.bg);
+    document.body.style.setProperty('--fg', s.fg);
+    $('sizeVal').textContent = s.size + 'px';
+    $('speedVal').textContent = s.speed;
+  }
+
+  input.value = s.text;
+  $('size').value = s.size; $('speed').value = s.speed;
+  $('bg').value = s.bg; $('fg').value = s.fg;
+  apply();
+
+  for (const k of ['size', 'speed', 'bg', 'fg']) {
+    $(k).addEventListener('input', e => {
+      s[k] = e.target.type === 'range' ? +e.target.value : e.target.value;
+      apply(); save();
+    });
+  }
+  input.addEventListener('input', () => { s.text = input.value; apply(); save(); });
+
+  // Auto-scroll: pos is a float so slow speeds still move; if scrollTop drifts
+  // from what we last set, the user scrolled manually and we continue from there.
+  let playing = false, pos = 0, lastSet = 0, lastTime = 0;
+
+  function setPlaying(on) {
+    playing = on;
+    $('play').textContent = on ? '⏸ Pause' : '▶ Play';
+    document.body.classList.toggle('paused', !on);
+    if (on) { pos = lastSet = prompter.scrollTop; lastTime = performance.now(); requestAnimationFrame(tick); }
+  }
+
+  function tick(now) {
+    if (!playing) return;
+    if (Math.abs(prompter.scrollTop - lastSet) > 2) pos = prompter.scrollTop;
+    pos += s.speed * (now - lastTime) / 1000;
+    lastTime = now;
+    prompter.scrollTop = pos;
+    lastSet = prompter.scrollTop;
+    if (prompter.scrollTop + prompter.clientHeight >= prompter.scrollHeight - 1) return setPlaying(false);
+    requestAnimationFrame(tick);
+  }
+
+  $('play').onclick = () => setPlaying(!playing);
+  prompter.onclick = () => setPlaying(!playing);
+  $('openConfig').onclick = () => { setPlaying(false); $('config').classList.add('open'); input.focus(); };
+  $('close').onclick = () => $('config').classList.remove('open');
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen?.();
+  }
+  $('fullscreen').onclick = toggleFullscreen;
+  document.addEventListener('fullscreenchange', () => {
+    $('fullscreen').textContent = document.fullscreenElement ? '⛶ Sair da tela cheia' : '⛶ Tela cheia';
+  });
+
+  document.addEventListener('keydown', e => {
+    if ($('config').classList.contains('open')) {
+      if (e.key === 'Escape') $('close').click();
+      return;
+    }
+    if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+    if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+  });
+</script>
+</body>
+</html>
